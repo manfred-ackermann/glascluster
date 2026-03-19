@@ -99,7 +99,20 @@
 <body>
 
   <div id="header">
-    <h1>GlasCluster K8s Graph</h1>
+    <div style="display: flex; align-items: center; gap: 20px;">
+      <h1>GlasCluster K8s Graph</h1>
+      <div id="filters" style="display: flex; gap: 10px; align-items: center; background: rgba(0,0,0,0.2); padding: 5px 15px; border-radius: 6px;">
+        <label for="namespaceFilter" style="font-size: 14px;">Namespace:</label>
+        <select id="namespaceFilter" style="padding: 4px; border-radius: 4px; min-width: 150px;">
+          <option value="">All Namespaces</option>
+        </select>
+        
+        <label for="deploymentFilter" style="font-size: 14px; margin-left: 10px;">Deployment:</label>
+        <select id="deploymentFilter" style="padding: 4px; border-radius: 4px; min-width: 150px;" disabled>
+          <option value="">All Deployments</option>
+        </select>
+      </div>
+    </div>
     <button id="refreshBtn">Refresh Data</button>
   </div>
 
@@ -143,6 +156,7 @@
     });
 
     let cy;
+    let rawGraphData = null;
 
     async function loadGraph() {
       const loading = document.getElementById('loading');
@@ -161,99 +175,31 @@
           throw new Error('Invalid graph data format received from server');
         }
         
-        // Transform the payload for Cytoscape
-        const elements = [
-          ...data.nodes.map(n => ({
-            data: { 
-              id: n.id, 
-              label: n.name, 
-              type: n.label,
-              color: colorMap[n.label] || colorMap.Unknown
-            }
-          })),
-          ...data.edges.map(e => ({
-            data: { 
-              id: e.id, 
-              source: e.sourceId, 
-              target: e.targetId, 
-              label: e.type 
-            }
-          }))
-        ];
-
-        if (cy) {
-          cy.destroy();
+        rawGraphData = data;
+        
+        // Populate namespace dropdown
+        const nsSelect = document.getElementById('namespaceFilter');
+        const currentNs = nsSelect.value;
+        nsSelect.innerHTML = '<option value="">All Namespaces</option>';
+        
+        const namespaces = rawGraphData.nodes
+          .filter(n => n.label === 'Namespace')
+          .map(n => n.name)
+          .sort();
+          
+        namespaces.forEach(ns => {
+          const opt = document.createElement('option');
+          opt.value = ns;
+          opt.textContent = ns;
+          nsSelect.appendChild(opt);
+        });
+        
+        if (namespaces.includes(currentNs)) {
+          nsSelect.value = currentNs;
         }
 
-        cy = cytoscape({
-          container: document.getElementById('cy'),
-          elements: elements,
-          style: [
-            {
-              selector: 'node',
-              style: {
-                'background-color': 'data(color)',
-                'label': 'data(label)',
-                'color': '#333',
-                'font-size': '12px',
-                'text-valign': 'bottom',
-                'text-halign': 'center',
-                'text-margin-y': '5px',
-                'width': '30px',
-                'height': '30px'
-              }
-            },
-            {
-              selector: 'node[type = "Cluster"]',
-              style: { 'width': '50px', 'height': '50px', 'shape': 'hexagon', 'font-size': '14px', 'font-weight': 'bold' }
-            },
-            {
-              selector: 'node[type = "Namespace"]',
-              style: { 'width': '40px', 'height': '40px', 'shape': 'round-rectangle' }
-            },
-            {
-              selector: 'edge',
-              style: {
-                'width': 2,
-                'line-color': '#bdc3c7',
-                'target-arrow-color': '#bdc3c7',
-                'target-arrow-shape': 'triangle',
-                'curve-style': 'bezier',
-                'label': 'data(label)',
-                'font-size': '10px',
-                'color': '#7f8c8d',
-                'text-rotation': 'autorotate',
-                'text-background-color': '#fff',
-                'text-background-opacity': 0.7
-              }
-            }
-          ],
-          layout: {
-            name: 'cose',
-            idealEdgeLength: 100,
-            nodeOverlap: 20,
-            refresh: 20,
-            fit: true,
-            padding: 30,
-            randomize: false,
-            componentSpacing: 100,
-            nodeRepulsion: 400000,
-            edgeElasticity: 100,
-            nestingFactor: 5,
-            gravity: 80,
-            numIter: 1000,
-            initialTemp: 200,
-            coolingFactor: 0.95,
-            minTemp: 1.0
-          }
-        });
-
-        // Add tooltips or interactions
-        cy.on('tap', 'node', function(evt){
-          const node = evt.target;
-          console.log('Tapped ' + node.data('type') + ' ' + node.data('label'));
-        });
-
+        updateFiltersAndRender();
+        
       } catch (err) {
         console.error('Failed to load graph', err);
         alert(`Failed to load graph data:\n\n${err.message || err}\n\nCheck console for more details.`);
@@ -261,6 +207,215 @@
         loading.style.display = 'none';
       }
     }
+
+    function updateFiltersAndRender() {
+      if (!rawGraphData) return;
+      
+      const nsSelect = document.getElementById('namespaceFilter');
+      const depSelect = document.getElementById('deploymentFilter');
+      
+      const selectedNs = nsSelect.value;
+      const currentDep = depSelect.value;
+      
+      // Update deployments dropdown based on selected namespace
+      depSelect.innerHTML = '<option value="">All Deployments</option>';
+      if (selectedNs) {
+        depSelect.disabled = false;
+        const deployments = rawGraphData.nodes
+          .filter(n => n.label === 'Deployment' && n.properties?.namespace === selectedNs)
+          .map(n => n.name)
+          .sort();
+          
+        deployments.forEach(dep => {
+          const opt = document.createElement('option');
+          opt.value = dep;
+          opt.textContent = dep;
+          depSelect.appendChild(opt);
+        });
+        
+        if (deployments.includes(currentDep)) {
+          depSelect.value = currentDep;
+        }
+      } else {
+        depSelect.disabled = true;
+      }
+      
+      const selectedDep = depSelect.value;
+      
+      // Filter the data based on selections
+      let filteredNodes = rawGraphData.nodes;
+      let filteredEdges = rawGraphData.edges;
+      
+      if (selectedNs) {
+        let validNodeIds = new Set();
+        
+        // Context nodes
+        const clusterNode = rawGraphData.nodes.find(n => n.label === 'Cluster');
+        if (clusterNode) validNodeIds.add(clusterNode.id);
+        
+        const nsNode = rawGraphData.nodes.find(n => n.label === 'Namespace' && n.name === selectedNs);
+        if (nsNode) validNodeIds.add(nsNode.id);
+        
+        let depPods = new Set();
+        
+        if (selectedDep) {
+          // If Deployment is selected, start with the Deployment and its Pods
+          const depNode = rawGraphData.nodes.find(n => n.label === 'Deployment' && n.name === selectedDep && n.properties?.namespace === selectedNs);
+          if (depNode) {
+            validNodeIds.add(depNode.id);
+            rawGraphData.edges.forEach(e => {
+              if (e.sourceId === depNode.id && e.type === 'OWNS') {
+                depPods.add(e.targetId);
+                validNodeIds.add(e.targetId);
+              }
+            });
+          }
+        } else {
+          // If only Namespace is selected, add all resources in that namespace
+          rawGraphData.nodes.forEach(n => {
+            if (n.properties?.namespace === selectedNs) {
+              validNodeIds.add(n.id);
+              if (n.label === 'Pod') {
+                depPods.add(n.id);
+              }
+            }
+          });
+        }
+        
+        // 1st Pass: Add resources directly connected to our Pods (Worker Nodes, Services)
+        rawGraphData.edges.forEach(e => {
+          if (e.type === 'RUNS_ON' && depPods.has(e.sourceId)) {
+            validNodeIds.add(e.targetId); // Add Worker Node
+          }
+          if (e.type === 'ROUTES_TO' && depPods.has(e.targetId)) {
+            validNodeIds.add(e.sourceId); // Add Service
+          }
+        });
+        
+        // 2nd Pass: Multi-hop networking connections
+        // E.g. Gateway -> HTTPRoute -> Service
+        let newlyAdded = true;
+        while (newlyAdded) {
+          newlyAdded = false;
+          rawGraphData.edges.forEach(e => {
+            // Forward/backward routes (e.g. HTTPRoute routing to Service, Gateway routing to HTTPRoute)
+            if (e.type === 'ROUTES_TO' && validNodeIds.has(e.targetId) && !validNodeIds.has(e.sourceId)) {
+              validNodeIds.add(e.sourceId);
+              newlyAdded = true;
+            }
+            // For GatewayClass -> Gateway ownership
+            if (e.type === 'OWNS' && validNodeIds.has(e.targetId) && !validNodeIds.has(e.sourceId)) {
+              validNodeIds.add(e.sourceId);
+              newlyAdded = true;
+            }
+          });
+        }
+        
+        // Build final filtered arrays
+        filteredNodes = rawGraphData.nodes.filter(n => validNodeIds.has(n.id));
+        filteredEdges = rawGraphData.edges.filter(e => validNodeIds.has(e.sourceId) && validNodeIds.has(e.targetId));
+      }
+
+      renderGraph(filteredNodes, filteredEdges);
+    }
+
+    function renderGraph(nodes, edges) {
+      // Transform the payload for Cytoscape
+      const elements = [
+        ...nodes.map(n => ({
+          data: { 
+            id: n.id, 
+            label: n.name, 
+            type: n.label,
+            color: colorMap[n.label] || colorMap.Unknown
+          }
+        })),
+        ...edges.map(e => ({
+          data: { 
+            id: e.id, 
+            source: e.sourceId, 
+            target: e.targetId, 
+            label: e.type 
+          }
+        }))
+      ];
+
+      if (cy) {
+        cy.destroy();
+      }
+
+      cy = cytoscape({
+        container: document.getElementById('cy'),
+        elements: elements,
+        style: [
+          {
+            selector: 'node',
+            style: {
+              'background-color': 'data(color)',
+              'label': 'data(label)',
+              'color': '#333',
+              'font-size': '12px',
+              'text-valign': 'bottom',
+              'text-halign': 'center',
+              'text-margin-y': '5px',
+              'width': '30px',
+              'height': '30px'
+            }
+          },
+          {
+            selector: 'node[type = "Cluster"]',
+            style: { 'width': '50px', 'height': '50px', 'shape': 'hexagon', 'font-size': '14px', 'font-weight': 'bold' }
+          },
+          {
+            selector: 'node[type = "Namespace"]',
+            style: { 'width': '40px', 'height': '40px', 'shape': 'round-rectangle' }
+          },
+          {
+            selector: 'edge',
+            style: {
+              'width': 2,
+              'line-color': '#bdc3c7',
+              'target-arrow-color': '#bdc3c7',
+              'target-arrow-shape': 'triangle',
+              'curve-style': 'bezier',
+              'label': 'data(label)',
+              'font-size': '10px',
+              'color': '#7f8c8d',
+              'text-rotation': 'autorotate',
+              'text-background-color': '#fff',
+              'text-background-opacity': 0.7
+            }
+          }
+        ],
+        layout: {
+          name: 'cose',
+          idealEdgeLength: 100,
+          nodeOverlap: 20,
+          refresh: 20,
+          fit: true,
+          padding: 30,
+          randomize: false,
+          componentSpacing: 100,
+          nodeRepulsion: 400000,
+          edgeElasticity: 100,
+          nestingFactor: 5,
+          gravity: 80,
+          numIter: 1000,
+          initialTemp: 200,
+          coolingFactor: 0.95,
+          minTemp: 1.0
+        }
+      });
+
+      // Add tooltips or interactions
+      cy.on('tap', 'node', function(evt){
+        const node = evt.target;
+        console.log('Tapped ' + node.data('type') + ' ' + node.data('label'));
+      });
+    }
+
+    document.getElementById('namespaceFilter').addEventListener('change', updateFiltersAndRender);
+    document.getElementById('deploymentFilter').addEventListener('change', updateFiltersAndRender);
 
     document.getElementById('refreshBtn').addEventListener('click', async () => {
       const btn = document.getElementById('refreshBtn');
