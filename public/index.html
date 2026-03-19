@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GlasCluster Graph Representation</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      margin: 0;
+      padding: 0;
+      background-color: #f8f9fa;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+    }
+    
+    #header {
+      background-color: #2c3e50;
+      color: white;
+      padding: 1rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      z-index: 10;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 1.5rem;
+    }
+
+    button {
+      background-color: #3498db;
+      color: white;
+      border: none;
+      padding: 0.5rem 1rem;
+      border-radius: 4px;
+      cursor: pointer;
+      font-weight: bold;
+      transition: background-color 0.2s;
+    }
+
+    button:hover {
+      background-color: #2980b9;
+    }
+
+    #cy {
+      flex: 1;
+      width: 100%;
+      height: 100%;
+      position: relative;
+    }
+
+    #legend {
+      position: absolute;
+      bottom: 20px;
+      left: 20px;
+      background: white;
+      padding: 15px;
+      border-radius: 8px;
+      box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+      z-index: 10;
+      border: 1px solid #ddd;
+    }
+
+    .legend-item {
+      display: flex;
+      align-items: center;
+      margin-bottom: 8px;
+      font-size: 14px;
+    }
+    
+    .legend-item:last-child {
+      margin-bottom: 0;
+    }
+
+    .legend-color {
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      margin-right: 10px;
+      display: inline-block;
+    }
+    
+    #loading {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      font-size: 1.5rem;
+      color: #7f8c8d;
+      z-index: 20;
+    }
+  </style>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.26.0/cytoscape.min.js"></script>
+</head>
+<body>
+
+  <div id="header">
+    <h1>GlasCluster K8s Graph</h1>
+    <button id="refreshBtn">Refresh Data</button>
+  </div>
+
+  <div id="loading">Loading graph data...</div>
+  <div id="cy"></div>
+
+  <div id="legend">
+    <div style="font-weight: bold; margin-bottom: 10px;">Node Types</div>
+    <div id="legendItems"></div>
+  </div>
+
+  <script>
+    // Color mapping for Kubernetes entities
+    const colorMap = {
+      Cluster: '#34495e',
+      Namespace: '#9b59b6',
+      Deployment: '#3498db',
+      ReplicaSet: '#2980b9',
+      Pod: '#1abc9c',
+      Service: '#f1c40f',
+      Ingress: '#e67e22',
+      Node: '#e74c3c',
+      GatewayClass: '#c0392b',
+      Gateway: '#d35400',
+      HTTPRoute: '#f39c12',
+      Unknown: '#95a5a6'
+    };
+
+    // Render legend
+    const legendContainer = document.getElementById('legendItems');
+    Object.keys(colorMap).forEach(key => {
+      if (key !== 'Unknown') {
+        const item = document.createElement('div');
+        item.className = 'legend-item';
+        item.innerHTML = `
+          <div class="legend-color" style="background-color: ${colorMap[key]}"></div>
+          <span>${key}</span>
+        `;
+        legendContainer.appendChild(item);
+      }
+    });
+
+    let cy;
+
+    async function loadGraph() {
+      const loading = document.getElementById('loading');
+      loading.style.display = 'block';
+      
+      try {
+        const response = await fetch('/api/graph');
+        const data = await response.json();
+        
+        // Transform the payload for Cytoscape
+        const elements = [
+          ...data.nodes.map(n => ({
+            data: { 
+              id: n.id, 
+              label: n.name, 
+              type: n.label,
+              color: colorMap[n.label] || colorMap.Unknown
+            }
+          })),
+          ...data.edges.map(e => ({
+            data: { 
+              id: e.id, 
+              source: e.sourceId, 
+              target: e.targetId, 
+              label: e.type 
+            }
+          }))
+        ];
+
+        if (cy) {
+          cy.destroy();
+        }
+
+        cy = cytoscape({
+          container: document.getElementById('cy'),
+          elements: elements,
+          style: [
+            {
+              selector: 'node',
+              style: {
+                'background-color': 'data(color)',
+                'label': 'data(label)',
+                'color': '#333',
+                'font-size': '12px',
+                'text-valign': 'bottom',
+                'text-halign': 'center',
+                'text-margin-y': '5px',
+                'width': '30px',
+                'height': '30px'
+              }
+            },
+            {
+              selector: 'node[type = "Cluster"]',
+              style: { 'width': '50px', 'height': '50px', 'shape': 'hexagon', 'font-size': '14px', 'font-weight': 'bold' }
+            },
+            {
+              selector: 'node[type = "Namespace"]',
+              style: { 'width': '40px', 'height': '40px', 'shape': 'round-rectangle' }
+            },
+            {
+              selector: 'edge',
+              style: {
+                'width': 2,
+                'line-color': '#bdc3c7',
+                'target-arrow-color': '#bdc3c7',
+                'target-arrow-shape': 'triangle',
+                'curve-style': 'bezier',
+                'label': 'data(label)',
+                'font-size': '10px',
+                'color': '#7f8c8d',
+                'text-rotation': 'autorotate',
+                'text-background-color': '#fff',
+                'text-background-opacity': 0.7
+              }
+            }
+          ],
+          layout: {
+            name: 'cose',
+            idealEdgeLength: 100,
+            nodeOverlap: 20,
+            refresh: 20,
+            fit: true,
+            padding: 30,
+            randomize: false,
+            componentSpacing: 100,
+            nodeRepulsion: 400000,
+            edgeElasticity: 100,
+            nestingFactor: 5,
+            gravity: 80,
+            numIter: 1000,
+            initialTemp: 200,
+            coolingFactor: 0.95,
+            minTemp: 1.0
+          }
+        });
+
+        // Add tooltips or interactions
+        cy.on('tap', 'node', function(evt){
+          const node = evt.target;
+          console.log('Tapped ' + node.data('type') + ' ' + node.data('label'));
+        });
+
+      } catch (err) {
+        console.error('Failed to load graph', err);
+        alert('Failed to load graph data');
+      } finally {
+        loading.style.display = 'none';
+      }
+    }
+
+    document.getElementById('refreshBtn').addEventListener('click', async () => {
+      const btn = document.getElementById('refreshBtn');
+      btn.disabled = true;
+      btn.innerText = 'Refreshing...';
+      
+      try {
+        await fetch('/api/graph/refresh', { method: 'POST' });
+        await loadGraph();
+      } catch (err) {
+        alert('Failed to refresh data');
+      } finally {
+        btn.disabled = false;
+        btn.innerText = 'Refresh Data';
+      }
+    });
+
+    // Initial load
+    loadGraph();
+  </script>
+</body>
+</html>
