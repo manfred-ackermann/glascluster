@@ -61,11 +61,14 @@ export class GraphStore {
 
   /**
    * Get all nodes and edges to be consumed by the API.
+   * Filters out any edges that point to non-existent nodes.
    */
   public getGraph(): GraphData {
     return {
       nodes: Array.from(this.nodes.values()),
-      edges: Array.from(this.edges.values()),
+      edges: Array.from(this.edges.values()).filter(edge => {
+        return this.nodes.has(edge.sourceId) && this.nodes.has(edge.targetId);
+      }),
     };
   }
 
