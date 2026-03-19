@@ -150,7 +150,16 @@
       
       try {
         const response = await fetch('/api/graph');
+        
+        if (!response.ok) {
+          throw new Error(`Server returned ${response.status} ${response.statusText}`);
+        }
+
         const data = await response.json();
+
+        if (!data || !Array.isArray(data.nodes) || !Array.isArray(data.edges)) {
+          throw new Error('Invalid graph data format received from server');
+        }
         
         // Transform the payload for Cytoscape
         const elements = [
@@ -247,7 +256,7 @@
 
       } catch (err) {
         console.error('Failed to load graph', err);
-        alert('Failed to load graph data');
+        alert(`Failed to load graph data:\n\n${err.message || err}\n\nCheck console for more details.`);
       } finally {
         loading.style.display = 'none';
       }

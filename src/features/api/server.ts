@@ -1,5 +1,6 @@
 import express from 'express';
 import cors from 'cors';
+import compression from 'compression';
 import path from 'path';
 import { config, logger } from '../../config';
 import { graphRouter } from './routes';
@@ -9,6 +10,7 @@ export function startServer() {
   const app = express();
 
   // Middleware
+  app.use(compression());
   app.use(cors());
   app.use(express.json());
 
@@ -38,8 +40,9 @@ export function startServer() {
   }, config.pollInterval);
 
   // Start the server
-  const server = app.listen(config.port, () => {
-    logger.info(`Web server listening on port ${config.port}`);
+  // Bind explicitly to 0.0.0.0 for better WSL compatibility
+  const server = app.listen(config.port, '0.0.0.0', () => {
+    logger.info(`Web server listening on 0.0.0.0:${config.port}`);
   });
 
   return { server, pollTimer };
